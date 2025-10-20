@@ -11,7 +11,7 @@ The project demonstrates a modular data ingestion and transformation workflow us
 
 The pipeline follows the Medallion design:
 
-* **Bronze layer:** Raw data ingestion (streaming or batch) directly from Azure Data Lake.
+* **Bronze layer:** Raw data ingestion with Databricks Auto Loader running in trigger-once mode for batch-like processing.
 * **Silver layer:** Data cleaning, standardization, and schema enforcement.
 * **Gold layer:** Aggregated and business-ready data for analytics or reporting.
 
