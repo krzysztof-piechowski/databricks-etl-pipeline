@@ -62,7 +62,7 @@ The ETL process is divided into parameterized Databricks notebooks, executed seq
 * **Azure Data Lake Storage (ADLS Gen2)**
 * **Databricks Auto Loader**
 * **Unity Catalog** (governance & metadata)
-* **Python 3 / Spark Structured Streaming**
+* **Python / Spark Structured Streaming**
 * **Medallion Architecture (Bronze–Silver–Gold)**
 * **Delta Change Data Feed (CDF)** for incremental processing
 
@@ -109,6 +109,109 @@ The ETL process is divided into parameterized Databricks notebooks, executed seq
 
 ---
 
+## 🧮 Gold Fact Table Logic
+
+The **Gold Fact Table (`FactOrders`)** represents the central transactional dataset in the Medallion pipeline, built incrementally using **Delta Change Data Feed (CDF)** from the Silver layer.
+This stage integrates multiple advanced mechanisms ensuring **data reliability**, **idempotency**, and **governance**.
+
+---
+
+### 🔁 Incremental Load via Delta CDF
+
+* Detects the latest processed version of the Silver `orders` Delta table.
+* Reads only **new changes** using CDF.
+* Tracks progress using two Delta logs:
+
+  * `gold.checkpoint_log` – stores the last processed Silver version
+  * `gold.batch_log` – records batch ID, execution metadata, row counts, and errors
+
+```python
+current_version = get_current_silver_version()
+last_version = get_last_processed_version()
+```
+
+Only unprocessed versions are included in the next load.
+
+---
+
+### 🧩 SCD-Aware Dimensional Joins
+
+Before inserting into the fact table, new rows are joined with current dimension tables to resolve surrogate keys:
+
+```python
+dim_products = spark.table(dim_products_table).filter("is_current = true")
+dim_customers = spark.table(dim_customers_table).filter("is_current = true")
+```
+
+This maintains **referential integrity** between the fact and dimensions, even as dimension tables evolve via **SCD Type 2** updates.
+
+---
+
+### ⚠️ Missing Dimension Handling
+
+Records referencing nonexistent dimension keys are isolated to a separate Delta table:
+
+```
+abfss://gold@storageaccpiechk.dfs.core.windows.net/FactOrders_MissingDims/
+```
+
+These are excluded from production tables until corresponding dimension records exist, ensuring **pipeline continuity without integrity loss**.
+
+---
+
+### 🧱 Staging and Idempotent MERGE
+
+All new data is first written to a temporary staging table, ensuring deterministic, idempotent inserts:
+
+```python
+staging_path = f"{staging_root}/batch_{batch_id}/"
+transformed.write.format("delta").mode("overwrite").save(staging_path)
+```
+
+Then merged into the main table:
+
+```python
+delta_fact.alias("t").merge(
+    F.broadcast(staging_df).alias("s"),
+    "t.order_id = s.order_id AND t.year = s.year AND t.month = s.month"
+).whenNotMatchedInsertAll().execute()
+```
+
+This guarantees that **reprocessing or retries never duplicate data**.
+
+---
+
+### 🧠 Resilience & Retry Logic
+
+* Automatic retries with exponential backoff (`MAX_RETRIES`, `RETRY_BACKOFF_SEC`)
+* Batch and checkpoint states updated only upon successful completion
+* All exceptions logged to Delta logs and re-raised for observability
+
+Ensures **fault-tolerant execution** and full **operational traceability**.
+
+---
+
+### ⚙️ Performance Optimizations
+
+* Partitioned by `year`, `month`
+* **ZORDERed** by `customer_sk`, `product_sk`
+* `OptimizeWrite` and `AutoCompact` enabled
+* Broadcast joins for small dimensional lookups
+
+---
+
+### 📋 Example Logs
+
+Execution lineage and checkpoints can be audited directly via SQL:
+
+```sql
+SELECT * FROM databricks_cata.gold.checkpoint_log;
+SELECT * FROM databricks_cata.gold.batch_log;
+```
+
+
+---
+
 ## 🧩 Setup & Deployment
 
 1. Clone this repository:
@@ -136,9 +239,9 @@ The ETL process is divided into parameterized Databricks notebooks, executed seq
 
 ## 📚 Author
 
-**[Krzysztof Piechowski]**
-Data Engineer | Azure | Databricks | ETL | Delta Lake
-[LinkedIn](https://linkedin.com/in/krzysztof-piechowski) • [GitHub](https://github.com/krzysztof-piechowski)
+**Krzysztof Piechowski**  
+Data Engineer | Azure | Databricks | ETL | Delta Lake  
+[LinkedIn](https://linkedin.com/in/krzysztof-piechowski) • [GitHub](https://github.com/krzysztof-piechowski)  
 
 ---
 
