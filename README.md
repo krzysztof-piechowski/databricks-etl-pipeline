@@ -2,6 +2,7 @@
 
 End-to-end ETL pipeline built on **Azure Databricks** following the **Medallion Architecture (Bronze–Silver–Gold)** pattern.
 The project demonstrates a modular data ingestion and transformation workflow using **Delta Lake**, **Auto Loader**, **Azure Data Lake Storage**, and **Unity Catalog** for governance.
+Additionally, the entire infrastructure is fully **automated and reproducible** through **Terraform**, enabling Infrastructure as Code (IaC) deployment on Azure.
 
 ---
 
@@ -62,6 +63,7 @@ The ETL process is divided into parameterized Databricks notebooks, executed seq
 * **Azure Data Lake Storage (ADLS Gen2)**
 * **Databricks Auto Loader**
 * **Unity Catalog** (governance & metadata)
+* **Terraform** (Infrastructure as Code)
 * **Python / Spark Structured Streaming**
 * **Medallion Architecture (Bronze–Silver–Gold)**
 * **Delta Change Data Feed (CDF)** for incremental processing
@@ -209,6 +211,25 @@ SELECT * FROM databricks_cata.gold.checkpoint_log;
 SELECT * FROM databricks_cata.gold.batch_log;
 ```
 
+---
+
+## 🧰 Infrastructure as Code (Terraform)
+
+The full Azure infrastructure required for this project is provisioned using **Terraform**. The setup is divided into two modular stages:
+
+| Stage | Folder                       | Description                                                                                                        |
+| ----- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **1** | `terraform/1_azure_infra/`   | Creates Azure infrastructure: Resource Group, ADLS Storage, Databricks Workspace, Access Connector, and Key Vault. |
+| **2** | `terraform/2_databricks_uc/` | Configures Databricks Unity Catalog and securely stores the Databricks token in Key Vault.                         |
+
+Key Terraform Features:
+
+* Automated provisioning of all Azure and Databricks resources
+* Secure token storage in **Azure Key Vault**
+* Modular separation between infrastructure and Unity Catalog setup
+* Full reusability and reproducibility for CI/CD pipelines
+
+> Terraform enables one-command deployment of the complete data platform, ensuring consistent and secure infrastructure setup across environments.
 
 ---
 
@@ -220,9 +241,19 @@ SELECT * FROM databricks_cata.gold.batch_log;
    git clone https://github.com/krzysztof-piechowski/databricks-etl-pipeline.git
    ```
 
-2. Upload `.py` files or notebooks to Azure Databricks workspace.
+2. Provision infrastructure using Terraform (see `/terraform/README.md` for detailed steps):
 
-3. Configure ADLS access (mount or ABFS path) and Unity Catalog catalog/schema.
+   ```bash
+   cd terraform/1_azure_infra
+   terraform init
+   terraform apply
+
+   cd ../2_databricks_uc
+   terraform init
+   terraform apply -var "databricks_token=dapiXXXXXXXXXXXX"
+   ```
+
+3. Upload `.py` files or notebooks to Azure Databricks workspace.
 
 4. Run the notebooks sequentially or as part of a Databricks Job pipeline.
 
@@ -245,4 +276,4 @@ Data Engineer | Azure | Databricks | ETL | Delta Lake
 
 ---
 
-> This project showcases a modern ETL pipeline using Databricks, ADLS, and Unity Catalog in the Medallion Architecture pattern, with SCD Type 2 and advanced Delta Lake optimizations.
+> This project showcases a modern ETL pipeline using Databricks, ADLS, and Unity Catalog in the Medallion Architecture pattern, with SCD Type 2, Delta Lake optimizations, and fully automated infrastructure deployment through Terraform.
