@@ -21,14 +21,15 @@ terraform/
 │
 ├── 1_azure_infra/
 │   ├── main.tf
+│   ├── outputs.tf
 │   ├── providers.tf
-│   ├── variables.tf
-│   └── outputs.tf
+│   └── variables.tf
 │
 └── 2_databricks_uc/
-    ├── providers.tf
     ├── databricks.tf
-    └── outputs.tf
+│   ├── outputs.tf
+│   ├── providers.tf
+│   └── variables.tf
 ```
 
 ---

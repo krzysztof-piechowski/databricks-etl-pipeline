@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.2"
   required_providers {
     databricks = {
       source  = "databricks/databricks"
@@ -8,11 +9,19 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.115"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+  }
   }
 }
 
 provider "azurerm" {
   features {}
+}
+
+resource "time_sleep" "wait_for_rbac" {
+  create_duration = "180s"
 }
 
 # -----------------------------
@@ -40,8 +49,13 @@ resource "azurerm_key_vault_secret" "databricks_token" {
   name         = "databricks-token"
   value        = var.databricks_token
   key_vault_id = data.azurerm_key_vault.kv.id
-}
 
+  depends_on = [
+    data.terraform_remote_state.azure,
+    time_sleep.wait_for_rbac,
+    data.azurerm_key_vault.kv
+  ]
+}
 
 # -----------------------------
 # Retrieve Databricks token from Key Vault
@@ -49,15 +63,13 @@ resource "azurerm_key_vault_secret" "databricks_token" {
 data "azurerm_key_vault_secret" "token" {
   name         = azurerm_key_vault_secret.databricks_token.name
   key_vault_id = data.azurerm_key_vault.kv.id
-
-  depends_on = [azurerm_key_vault_secret.databricks_token]
+  depends_on   = [azurerm_key_vault_secret.databricks_token]
 }
 
-
 # -----------------------------
-# Databricks Provider
+# Databricks Provider Configuration
 # -----------------------------
 provider "databricks" {
-  host  = data.terraform_remote_state.azure.outputs.databricks_workspace_url
+  host  = "https://${data.terraform_remote_state.azure.outputs.databricks_workspace_url}"
   token = data.azurerm_key_vault_secret.token.value
 }

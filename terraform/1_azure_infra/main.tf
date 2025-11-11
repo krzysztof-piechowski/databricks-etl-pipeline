@@ -1,6 +1,14 @@
 # ===================================================================
-# Databricks ETL Pipeline – Azure Infrastructure (with Key Vault)
+# Databricks ETL Pipeline – Azure Infrastructure (Enhanced)
 # ===================================================================
+
+# -----------------------------
+# Data Sources
+# -----------------------------
+data "azurerm_subscription" "current" {}
+
+data "azurerm_client_config" "current" {}
+
 
 # -----------------------------
 # Resource Group
@@ -12,6 +20,7 @@ resource "azurerm_resource_group" "rg" {
   tags = {
     environment = "dev"
     project     = "databricks-etl-pipeline"
+    managed_by  = "terraform"
   }
 }
 
@@ -26,9 +35,27 @@ resource "azurerm_storage_account" "storage" {
   account_replication_type = "LRS"
   is_hns_enabled           = true
 
+  # Enhanced security settings
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+  
+  # Enable blob versioning and soft delete for data protection
+  blob_properties {
+    versioning_enabled = true
+    
+    delete_retention_policy {
+      days = 7
+    }
+    
+    container_delete_retention_policy {
+      days = 7
+    }
+  }
+
   tags = {
     environment = "dev"
     project     = "databricks-etl-pipeline"
+    managed_by  = "terraform"
   }
 }
 
@@ -66,6 +93,51 @@ resource "azurerm_storage_container" "metastore" {
 }
 
 # -----------------------------
+# Storage Lifecycle Management Policy
+# -----------------------------
+resource "azurerm_storage_management_policy" "lifecycle" {
+  count              = var.enable_lifecycle_policy ? 1 : 0
+  storage_account_id = azurerm_storage_account.storage.id
+
+  rule {
+    name    = "delete-old-bronze-data"
+    enabled = true
+    
+    filters {
+      prefix_match = ["bronze/customers/", "bronze/orders/", "bronze/products/"]
+      blob_types   = ["blockBlob"]
+    }
+    
+    actions {
+      base_blob {
+        delete_after_days_since_modification_greater_than = var.bronze_retention_days
+      }
+      
+      snapshot {
+        delete_after_days_since_creation_greater_than = 30
+      }
+    }
+  }
+  
+  rule {
+    name    = "archive-old-source-data"
+    enabled = true
+    
+    filters {
+      prefix_match = ["source/"]
+      blob_types   = ["blockBlob"]
+    }
+    
+    actions {
+      base_blob {
+        tier_to_cool_after_days_since_modification_greater_than    = 30
+        tier_to_archive_after_days_since_modification_greater_than = 90
+      }
+    }
+  }
+}
+
+# -----------------------------
 # Databricks Workspace
 # -----------------------------
 resource "azurerm_databricks_workspace" "databricks" {
@@ -77,6 +149,7 @@ resource "azurerm_databricks_workspace" "databricks" {
   tags = {
     environment = "dev"
     project     = "databricks-etl-pipeline"
+    managed_by  = "terraform"
   }
 }
 
@@ -87,6 +160,7 @@ resource "azurerm_databricks_access_connector" "connector" {
   name                = var.databricks_connector_name
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
+  
   identity {
     type = "SystemAssigned"
   }
@@ -94,14 +168,13 @@ resource "azurerm_databricks_access_connector" "connector" {
   tags = {
     environment = "dev"
     project     = "databricks-etl-pipeline"
+    managed_by  = "terraform"
   }
 }
 
 # -----------------------------
-# Role assignment (Access to Storage)
+# Role Assignments (Access to Storage)
 # -----------------------------
-data "azurerm_subscription" "current" {}
-
 resource "azurerm_role_assignment" "storage_blob_data_contributor" {
   depends_on           = [azurerm_databricks_access_connector.connector, azurerm_storage_account.storage]
   principal_id         = azurerm_databricks_access_connector.connector.identity[0].principal_id
@@ -116,33 +189,57 @@ resource "azurerm_role_assignment" "storage_blob_data_owner" {
   scope                = azurerm_storage_account.storage.id
 }
 
-
 # ===================================================================
-# Azure Key Vault (secure storage for Databricks token)
+# Azure Key Vault (Secure Storage for Secrets)
 # ===================================================================
+resource "random_string" "kv_suffix" {
+  length  = 4
+  special = false
+  upper   = false
+}
 
-# Create Key Vault
 resource "azurerm_key_vault" "kv" {
-  name                        = "kv-databricks-pipeline"
-  location                    = azurerm_resource_group.rg.location
-  resource_group_name         = azurerm_resource_group.rg.name
-  tenant_id                   = data.azurerm_subscription.current.tenant_id
-  sku_name                    = "standard"
+  name                       = "${var.key_vault_name}-${random_string.kv_suffix.result}"
+  location                   = azurerm_resource_group.rg.location
+  resource_group_name        = azurerm_resource_group.rg.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
 
-  soft_delete_retention_days  = 7
-  purge_protection_enabled    = false
+  rbac_authorization_enabled      = true
+    
+  # Security settings
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = false
+  
+  # Network settings
+  network_acls {
+    default_action = "Allow"
+    bypass         = "AzureServices"
+  }
 
   tags = {
     environment = "dev"
     project     = "databricks-etl-pipeline"
+    managed_by  = "terraform"
   }
 }
 
-# Give current user access to manage secrets in Key Vault
-data "azurerm_client_config" "current" {}
 
+# -----------------------------
+# Role Assignment #1: Current User (for Terraform operations)
+# -----------------------------
 resource "azurerm_role_assignment" "kv_secret_officer" {
   scope                = azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# -----------------------------
+# Role Assignment #2: Databricks Access Connector (for reading secrets)
+# -----------------------------
+resource "azurerm_role_assignment" "kv_secrets_user_connector" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_databricks_access_connector.connector.identity[0].principal_id
+  depends_on           = [azurerm_databricks_access_connector.connector]
 }
