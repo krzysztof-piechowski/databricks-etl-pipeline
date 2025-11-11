@@ -89,6 +89,8 @@ resource "databricks_grants" "catalog_grants" {
     principal  = data.databricks_current_user.me.user_name
     privileges = ["ALL_PRIVILEGES"]
   }
+
+  depends_on = [databricks_catalog.main]
 }
 
 # -----------------------------
