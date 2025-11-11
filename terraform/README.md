@@ -27,9 +27,9 @@ terraform/
 │
 └── 2_databricks_uc/
     ├── databricks.tf
-│   ├── outputs.tf
-│   ├── providers.tf
-│   └── variables.tf
+    ├── outputs.tf
+    ├── providers.tf
+    └── variables.tf
 ```
 
 ---
